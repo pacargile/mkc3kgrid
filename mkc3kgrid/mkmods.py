@@ -1,5 +1,6 @@
 import h5py
 import numpy as np
+from astropy.table import Table
 from Payne.fitting import genmod
 
 class getmod(object):
@@ -73,23 +74,53 @@ class getmod(object):
 		Dist = kwargs.get('Dist',100.0)
 		Av = kwargs.get('Av',0.05)
 
-		specpars = [Teff,logg,FeH,aFe,radvel,rotvel,inst_R]
-		photpars = [Teff,logg,FeH,logR,Dist,Av]
+		self.specpars = [Teff,logg,FeH,aFe,radvel,rotvel,inst_R]
+		self.photpars = [Teff,logg,FeH,logR,Dist,Av]
 
-		self.specmod = self.GM.genspec(specpars)
-		self.sedmod  = self.GM.genphot(photpars)
+		self.specmod = self.GM.genspec(self.specpars)
+		self.sedmod  = self.GM.genphot(self.photpars)
 
 	def writeout(self,*args,**kwargs):
 		outfile_root = kwargs.get('output','test')
+		overwrite = kwargs.get('overwrite',False)
 
-		outfile = h5py.File('{}.h5'.format(outfile_root))
-		outfile.create_dataset('spec/wave',data=np.array(self.specmod[0]))
-		outfile.create_dataset('spec/flux',data=np.array(self.specmod[1]))
+		if overwrite:
+			outfile = h5py.File('{}.h5'.format(outfile_root),'w')
+			modindex = 0
+		else:
+			outfile = h5py.File('{}.h5'.format(outfile_root),'a')
+			modindex = len(outfile.keys())
+
+		outfile.create_dataset('mod_{0}/pars/specpars'.format(modindex),data=np.array(self.specpars))
+		outfile.create_dataset('mod_{0}/pars/photpars'.format(modindex),data=np.array(self.photpars))
+		outfile.create_dataset('mod_{0}/spec/wave'.format(modindex),data=np.array(self.specmod[0]))
+		outfile.create_dataset('mod_{0}/spec/flux'.format(modindex),data=np.array(self.specmod[1]))
 
 		for kk in self.sedmod.keys():
-			outfile.create_dataset('phot/{}'.format(kk),data=self.sedmod[kk])
+			outfile.create_dataset('mod_{0}/phot/{1}'.format(modindex,kk),data=self.sedmod[kk])
 
 		outfile.close()
 
 
+class SampleMIST(object):
+	"""docstring for SampleMIST"""
+	def __init__(self,):
+		super(SampleMIST, self).__init__()
+		MISTh5 = h5py.File('/Users/pcargile/Astro/MIST/MIST_v1.2/EEPTRACKS/MIST_1.2_EEPtrk_MSRGB.h5','r')
+		self.MIST = {kk:MISTh5[kk] for kk in MISTh5['index']}
+		self.gm = getmod()
 
+	def pullsolar(self,):
+		misttab = Table(np.array(self.MIST[b'0.00/0.00/0.00']))
+		return misttab[misttab['initial_mass'] == 1.0]
+
+	def mksolar(self,):
+		soltab = self.pullsolar()
+		for EEP in [300,450,600]:
+			soltab_i = soltab[soltab['EEP'] == EEP]
+			self.gm.gmod(Teff=10.0**soltab_i['log_Teff'][0],logg=soltab_i['log_g'][0],FeH=soltab_i['[Fe/H]'][0],aFe=0.0)
+			self.gm.writeout(output='soltest')
+
+if __name__ == '__main__':
+	SM = SampleMIST()
+	SM.mksolar()
